@@ -10,12 +10,7 @@ import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, TensorDataset
-import torch
-import torch.nn as nn
-import numpy as np
-import matplotlib.pyplot as plt
-from torchvision import datasets, transforms
+import torchvision.models as models
 from torch.utils.data import DataLoader, TensorDataset
 
 print("Preparing Dataset...")
@@ -56,32 +51,12 @@ for (c0, c1) in pairs:
     cells.append({"cell_type": "code", "metadata": {}, "execution_count": None, "outputs": [], "source": [line + "\n" for line in network_code.split('\n')]})
 
     # 3. Hybrid Model and Replay
-    hybrid_cell = """class CNNFeatureExtractor(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv1 = nn.Conv2d(1, 16, kernel_size=3, padding=1)
-        self.relu1 = nn.ReLU()
-        self.pool1 = nn.MaxPool2d(2)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)
-        self.relu2 = nn.ReLU()
-        self.pool2 = nn.MaxPool2d(2)
-        self.flatten = nn.Flatten()
-        self.fc = nn.Linear(32 * 7 * 7, 64)
-        self.relu3 = nn.ReLU()
-
-    def forward(self, x):
-        x = self.pool1(self.relu1(self.conv1(x)))
-        x = self.pool2(self.relu2(self.conv2(x)))
-        x = self.flatten(x)
-        x = self.relu3(self.fc(x))
-        return x
-
-class HybridModel(nn.Module):
+    hybrid_cell = """class HybridModel(nn.Module):
     def __init__(self, cnn, device):
         super().__init__()
         self.cnn = cnn
         # Gen 2: We start with output_dim=1 for the first task
-        self.dynamic = PyTorchDynamicNetwork(input_dim=64, output_dim=1, max_neurons=500).to(device)
+        self.dynamic = PyTorchDynamicNetwork(input_dim=512, output_dim=1, max_neurons=1000).to(device)
         
     def forward(self, x):
         features = self.cnn(x)
@@ -151,8 +126,12 @@ print("\\n" + "="*50)
 print("--- Pre-Training CNN Feature Extractor ---")
 print("="*50)
 
-shared_cnn = CNNFeatureExtractor().to(device)
-classifier = nn.Linear(64, 10).to(device)
+shared_cnn = models.resnet18(weights='DEFAULT').to(device)
+# Adapt for 1-channel grayscale MNIST
+shared_cnn.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False).to(device)
+shared_cnn.fc = nn.Identity() # Output is now 512-dim feature vector
+
+classifier = nn.Linear(512, 10).to(device)
 optimizer_cnn = torch.optim.Adam(list(shared_cnn.parameters()) + list(classifier.parameters()), lr=1e-3)
 criterion_cnn = nn.CrossEntropyLoss()
 
@@ -198,7 +177,7 @@ for task_id, (name, X_train, y_train, X_test, y_test) in enumerate(tasks):
     dataset = TensorDataset(X_train, y_train)
     loader = DataLoader(dataset, batch_size=256, shuffle=True)
     
-    loss_ema = 0.5
+    stream_loss_ema = 0.5
     batches_since_grow = 0
     
     for epoch in range(5):
@@ -234,27 +213,34 @@ for task_id, (name, X_train, y_train, X_test, y_test) in enumerate(tasks):
             loss.backward()
             optimizer.step()
             
-            loss_ema = 0.9 * loss_ema + 0.1 * loss.item()
+            # Anomaly Detection: Update the network's loss EMA
+            hybrid_model.dynamic.update_loss_ema(loss.item())
+            
+            stream_loss_ema = 0.9 * stream_loss_ema + 0.1 * loss.item()
             # Gen 2: We check the MAX local stress among all neurons
             max_stress = hybrid_model.dynamic.get_max_neuron_stress()
             batches_since_grow += 1
             
-            if max_stress > 0.3:
-                # Generation 2: Localized Freeze (only freezes stressed neurons)
-                n_frozen = hybrid_model.dynamic.stress_freeze(threshold=0.3)
+            # Calculate what the threshold currently is based on loss EMA
+            capped_loss = min(hybrid_model.dynamic.loss_ema, 1.0)
+            current_threshold = 0.5 - (0.4 * capped_loss)
+            
+            if max_stress > current_threshold:
+                # Generation 2: Localized Freeze using Dynamic Threshold
+                n_frozen, actual_thresh = hybrid_model.dynamic.stress_freeze(base_threshold=0.5, sensitivity_factor=0.4)
                 if n_frozen > 0:
                     hybrid_model.dynamic.grow_neuron(num_connections=15)
                     _reset_adam_for_neuron(optimizer, hybrid_model.dynamic, hybrid_model.dynamic.active_neurons - 1)
                     batches_since_grow = 0
-                    print(f"  [Batch] LOCAL FREEZE: {n_frozen} conns. Grew 1. active={hybrid_model.dynamic.active_neurons} Max Stress={max_stress:.2f}")
+                    print(f"  [Batch] LOCAL FREEZE: {n_frozen} conns. active={hybrid_model.dynamic.active_neurons} | Threshold dropped to {actual_thresh:.2f} due to Anomaly!")
             
-            elif loss_ema > 0.2 and batches_since_grow > 20 and max_stress <= 0.3:
+            elif stream_loss_ema > 0.2 and batches_since_grow > 20 and max_stress <= current_threshold:
                 hybrid_model.dynamic.grow_neuron(num_connections=15)
                 _reset_adam_for_neuron(optimizer, hybrid_model.dynamic, hybrid_model.dynamic.active_neurons - 1)
                 batches_since_grow = 0
-                print(f"  [Batch] GROW(Loss): active={hybrid_model.dynamic.active_neurons} loss={loss_ema:.4f}")
+                print(f"  [Batch] GROW(Loss): active={hybrid_model.dynamic.active_neurons} loss={stream_loss_ema:.4f} loss_ema={hybrid_model.dynamic.loss_ema:.2f}")
         
-        print(f"  [Epoch {epoch+1:2d}] active={hybrid_model.dynamic.active_neurons} loss={loss_ema:.4f}")
+        print(f"  [Epoch {epoch+1:2d}] active={hybrid_model.dynamic.active_neurons} loss={stream_loss_ema:.4f} loss_ema={hybrid_model.dynamic.loss_ema:.2f} threshold={current_threshold:.2f}")
         
     replay.add_data(X_train, y_train, task_id, num_samples=200)
     
