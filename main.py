@@ -146,7 +146,11 @@ if __name__ == "__main__":
     dynamic_net = DynamicBrain(input_dim=784, output_dim=10).to(device)
     opt_dyn = torch.optim.Adam(dynamic_net.parameters(), lr=0.005)
     crit = nn.CrossEntropyLoss()
-    signal = MASSignal(grow_margin=1.05, burnin=50) # Optimized threshold
+    
+    # We use Margin 1.05 for standard MNIST. 
+    # For the harder FashionMNIST, use the Evolutionary Apex Predator genes:
+    # signal = MASSignal(grow_margin=1.265, fast_alpha=0.141, slow_alpha=0.0001, burnin=30)
+    signal = MASSignal(grow_margin=1.05, burnin=50)
 
     total_batches = 0
     print("\\nStarting Sequential Training (5 Tasks)...")

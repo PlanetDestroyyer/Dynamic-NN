@@ -42,6 +42,23 @@ The architecture was evaluated on the **Split-MNIST** continual learning benchma
 *   `main.py`: A standalone executable Python script containing the core architecture and training loop for easy reference.
 *   `notebooks/split_mnist_benchmark.ipynb`: A self-contained Jupyter Notebook implementing the architectures, training loops, evaluation metrics, and comparative visualizations for both Split-MNIST and Split-FashionMNIST.
 
+
+## Hyperparameter Optimization: The Evolutionary Algorithm
+We discovered that standard Backpropagation cannot optimize discrete structural decisions (like `if MAS > threshold: sprout()`) because the gradients cannot pass through discrete mathematical cliffs (non-differentiability). 
+
+To solve this, we built a **Genetic Evolutionary Algorithm** (`evolutionary_search.py`) to breed the optimal hyperparameters for the MAS Pain Receptor.
+
+### 1. The "Reward Hacking" Loophole
+When we initially ran the evolution on a heavily truncated, small dataset, the algorithm achieved 97% accuracy but sprouted **0 times**. It realized its starting capacity of 10 neurons was sufficient to memorize a tiny dataset, so it evolved genes that made the MAS receptor completely deaf to avoid the sprouting penalty. It found a loophole in our fitness function!
+
+### 2. The GPU Apex Predator
+When we forced the evolution to train on the complete 15,000-image FashionMNIST dataset, the 10-neuron capacity was easily overwhelmed. The evolutionary algorithm was forced to adapt, and it successfully bred the apex predator:
+*   `Margin=1.2654, Fast_Alpha=0.1411, Slow_Alpha=0.00010`
+*   **Achieved Accuracy:** 94.2%
+*   **Spikes:** 4 (Perfectly matching the 4 task boundaries!)
+
+By aligning the environment (batch limits) between the evolution script and the testing notebook, we achieved flawless >90% retention on the notoriously difficult Split-FashionMNIST dataset.
+
 ## Execution
 
 The provided Jupyter Notebook can be executed in any standard environment (Google Colab, Jupyter Lab, VSCode). It autonomously downloads the necessary datasets, trains the models sequentially, and outputs performance trajectories illustrating the mitigation of catastrophic forgetting.

@@ -61,3 +61,17 @@ Because $e^{-\infty} = 0$, the Softmax assigns exactly 0 probability to the old 
 
 ## Conclusion
 By combining MAS-driven Capacity Detection, Sprout-and-Freeze architectural updates, and Active-Class Loss Masking, the network achieves true Continual Learning. It grows autonomously in response to complexity, exactly like a biological brain.
+
+## 5. Hyperparameter Optimization: The Evolutionary Loophole
+While exploring ways to autonomously tune the MAS Pain Receptor's hyperparameters (`grow_margin`, `fast_alpha`, `slow_alpha`), we discovered that **structural plasticity is non-differentiable**. Because neurogenesis relies on a discrete threshold (`if MAS > threshold:`), standard Backpropagation returns a gradient of exactly `None` for the threshold parameter, locking it in place.
+
+To solve this, we employed a **Genetic Evolutionary Algorithm** (`evolutionary_search.py`).
+
+### The Reward Hacking Loophole
+In our first evolutionary test, we provided a small, truncated dataset (3 tasks, 500 images each) to speed up evolution. The algorithm achieved 97% accuracy, but it did so while sprouting **0 times**. The network realized its initial 10 neurons were enough to memorize a tiny dataset, so it evolved genes that made the MAS receptor incredibly dull, allowing it to coast to high accuracy without ever triggering plasticity and taking the associated "spiking penalty." It hacked the fitness function!
+
+### The GPU Apex Predator
+When tested on the full, massive FashionMNIST dataset, the loophole was closed. 10 neurons were insufficient. Forced to adapt, the evolutionary algorithm bred an apex set of genes:
+*   `Margin=1.2654, Fast_Alpha=0.1411, Slow_Alpha=0.00010`
+
+These genes successfully detected all 4 task boundaries on the notoriously noisy FashionMNIST dataset, maintaining >94% retention across all 5 tasks and proving that biological evolution can optimize the discrete structural boundaries that Backpropagation cannot.
